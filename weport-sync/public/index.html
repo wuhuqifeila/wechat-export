@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Weport 聊天同步</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9; --card: #ffffff; --line: #e3e6eb; --text: #1c2024; --muted: #6b7280;
+    --brand: #1f6feb; --ok: #17803d; --warn: #b45309; --bad: #b42318;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.55 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 20px 28px 12px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(320px, 380px) 1fr; gap: 16px; padding: 8px 28px 40px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  section h2 { margin: 0 0 12px; font-size: 15px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], input[type=password], input[type=number], select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button {
+    padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff;
+    font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .status { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #f1f3f6; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .muted { color: var(--muted); }
+  .list { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid #f0f2f5; }
+  .item:last-child { border-bottom: 0; }
+  .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .id { color: var(--muted); font-size: 12px; }
+  .target { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .target:last-child { border-bottom: 0; }
+  pre.log { background: #0f1419; color: #d6dee6; padding: 12px; border-radius: 8px; max-height: 260px; overflow: auto; font-size: 12px; }
+  .problem { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .tag { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Weport 聊天同步</h1>
+  <p>选择要同步的聊天，程序会把新消息与附件定时传到接收服务器。页面只在本机打开。</p>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>接收服务器</h2>
+      <label for="serverUrl">地址</label>
+      <input id="serverUrl" type="text" placeholder="https://example.com/wechat-sync" />
+      <label for="token">上传令牌（留空表示不修改）</label>
+      <input id="token" type="password" placeholder="已设置" autocomplete="off" />
+      <div class="row">
+        <div>
+          <label for="interval">间隔（分钟）</label>
+          <input id="interval" type="number" min="1" max="1440" />
+        </div>
+        <div>
+          <label for="lookback">首次回看（小时）</label>
+          <input id="lookback" type="number" min="1" max="8760" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="maxFileMb">单附件上限（MB）</label>
+          <input id="maxFileMb" type="number" min="1" max="50" />
+        </div>
+        <div>
+          <label>附件范围</label>
+          <div class="row">
+            <label style="margin:6px 0"><input id="images" type="checkbox" /> 图片</label>
+            <label style="margin:6px 0"><input id="files" type="checkbox" /> 文件</label>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="save">保存配置</button>
+        <button id="test">测试连接</button>
+      </div>
+      <div id="problems" class="problem"></div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>运行</h2>
+      <div class="actions" style="margin-top:0">
+        <button class="primary" id="sync">立即同步一次</button>
+        <button id="flush">补传积压</button>
+        <button id="refreshChats">刷新聊天列表</button>
+      </div>
+      <div class="status">
+        <span class="pill"><span class="dot" id="serverDot"></span><span id="serverText">服务器未检测</span></span>
+        <span class="pill">待上传批次：<b id="pendingCount">0</b></span>
+        <span class="pill">今日已上传：<b id="uploadedToday">0</b></span>
+      </div>
+      <label style="margin-top:16px">最近日志</label>
+      <pre class="log" id="log">（暂无）</pre>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>已选聊天</h2>
+      <div id="targets" class="muted">还没有选择聊天</div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>从微信里选择聊天</h2>
+      <div class="row">
+        <input id="search" type="text" placeholder="输入聊天名称或会话ID筛选" />
+      </div>
+      <div class="list" id="chats" style="margin-top:10px"><div class="muted" style="padding:12px">正在读取聊天列表…</div></div>
+      <div class="actions">
+        <button class="primary" id="saveTargets">保存选择</button>
+        <span class="tag" id="chatHint"></span>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+let allChats = []
+let selected = new Set()
+let config = null
+
+async function api(url, options) {
+  const response = await fetch(url, options)
+  const body = await response.json().catch(() => ())
+  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`)
+  return body
+}
+
+function fmtTime(seconds) {
+  if (!seconds) return '未开始'
+  return new Date(seconds * 1000).toLocaleString()
+}
+
+function renderTargets(list) {
+  const box = $('targets')
+  if (!list.length) { box.className = 'muted'; box.textContent = '还没有选择聊天'; return }
+  box.className = ''
+  box.innerHTML = list.map((target) => `
+    <div class="target">
+      <span>${escapeHtml(target.name)}</span>
+      <span class="muted">上次同步：${target.lastSuccessAt ? new Date(target.lastSuccessAt).toLocaleString() : '未开始'}</span>
+    </div>`).join('')
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+function renderChats() {
+  const query = $('search').value.trim().toLowerCase()
+  const box = $('chats')
+  const rows = allChats.filter((chat) => !query || `${chat.name} ${chat.id}`.toLowerCase().includes(query)).slice(0, 200)
+  if (!rows.length) { box.innerHTML = '<div class="muted" style="padding:12px">没有匹配的聊天</div>'; return }
+  box.innerHTML = rows.map((chat) => `
+    <label class="item">
+      <input type="checkbox" data-id="${escapeHtml(chat.id)}" data-name="${escapeHtml(chat.name)}" ${selected.has(chat.id) ? 'checked' : ''} />
+      <span class="name">${escapeHtml(chat.name)}</span>
+      <span class="id">${chat.type === 'group' ? '群聊' : chat.type === 'official' ? '公众号' : '私聊'} · ${chat.messageCount || 0} 条</span>
+    </label>`).join('')
+  box.querySelectorAll('input[type=checkbox]').forEach((input) => {
+    input.addEventListener('change', () => {
+      if (input.checked) selected.add(input.dataset.id)
+      else selected.delete(input.dataset.id)
+    })
+  })
+}
+
+async function loadStatus() {
+  const state = await api('/api/status')
+  config = state.config
+  $('serverUrl').value = state.config.serverUrl || ''
+  $('interval').value = Math.round(state.config.intervalSeconds / 60)
+  $('lookback').value = state.config.initialLookbackHours
+  $('maxFileMb').value = state.config.export.maxFileMb
+  $('images').checked = state.config.export.images
+  $('files').checked = state.config.export.files
+  $('token').placeholder = state.config.hasToken ? '已设置，留空不修改' : '未设置'
+  $('serverDot').className = `dot ${state.server.ok ? 'ok' : 'bad'}`
+  $('serverText').textContent = state.server.ok ? '服务器正常' : `服务器不可用：${state.server.message || ''}`
+  $('pendingCount').textContent = state.pending.length
+  $('uploadedToday').textContent = state.uploadedToday
+  $('problems').textContent = state.problems.length ? state.problems.join('；') : ''
+  selected = new Set(state.targets.map((target) => target.id))
+  renderTargets(state.targets)
+  if (state.pending.length) {
+    $('pendingCount').title = state.pending.map((item) => `${item.session} ${item.parts.filter((p) => p.status !== 'uploaded').length} 包待传`).join('\n')
+  }
+}
+
+async function loadChats(force) {
+  $('chats').innerHTML = '<div class="muted" style="padding:12px">正在读取聊天列表…</div>'
+  try {
+    const data = await api(`/api/chats${force ? '?refresh=1' : ''}`)
+    allChats = data.sessions
+    renderChats()
+    $('chatHint').textContent = `共 ${data.sessions.length} 个聊天`
+  } catch (error) {
+    $('chats').innerHTML = `<div class="muted" style="padding:12px">读取失败：${escapeHtml(error.message)}</div>`
+  }
+}
+
+async function loadLog() {
+  try {
+    const data = await api('/api/log?lines=80')
+    $('log').textContent = data.lines.length ? data.lines.join('\n') : '（暂无）'
+  } catch { /* 忽略 */ }
+}
+
+$('save').addEventListener('click', async () => {
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        serverUrl: $('serverUrl').value.trim(),
+        token: $('token').value.trim(),
+        intervalSeconds: Number($('interval').value) * 60,
+        initialLookbackHours: Number($('lookback').value),
+        maxFileMb: Number($('maxFileMb').value),
+        images: $('images').checked,
+        files: $('files').checked,
+      }),
+    })
+    $('token').value = ''
+    await loadStatus()
+    $('log').textContent = '配置已保存。'
+  } catch (error) { alert(error.message) }
+})
+
+$('test').addEventListener('click', async () => {
+  await loadStatus()
+  alert($('serverText').textContent)
+})
+
+$('saveTargets').addEventListener('click', async () => {
+  const add = allChats.filter((chat) => selected.has(chat.id)).map((chat) => ({ id: chat.id, name: chat.name }))
+  const existing = new Set((config?.targets || []).map((target) => target.id))
+  const remove = [...existing].filter((id) => !selected.has(id))
+  try {
+    await api('/api/targets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add, remove }),
+    })
+    await loadStatus()
+    $('log').textContent = `已保存 ${add.length} 个聊天，移除 ${remove.length} 个。`
+  } catch (error) { alert(error.message) }
+})
+
+$('sync').addEventListener('click', async () => {
+  try {
+    await api('/api/sync', { method: 'POST' })
+    $('log').textContent = '已开始同步，稍后刷新状态查看结果…'
+    setTimeout(() => { loadStatus(); loadLog() }, 4000)
+  } catch (error) { alert(error.message) }
+})
+
+$('flush').addEventListener('click', async () => {
+  try {
+    const result = await api('/api/flush', { method: 'POST' })
+    $('log').textContent = `补传：成功 ${result.uploaded}，失败 ${result.failed}，仍待传 ${result.remaining}`
+    loadStatus()
+  } catch (error) { alert(error.message) }
+})
+
+$('refreshChats').addEventListener('click', () => loadChats(true))
+$('search').addEventListener('input', renderChats)
+
+(async () => {
+  await loadStatus()
+  await loadChats(false)
+  await loadLog()
+  setInterval(() => { loadStatus().catch(() => null); loadLog() }, 15000)
+})()
+</script>
+</body>
+</html>

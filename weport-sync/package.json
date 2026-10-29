@@ -1,0 +1,22 @@
+{
+  "name": "weport-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "把 Weport 的聊天记录按增量导出并上传到接收服务器",
+  "bin": {
+    "weport-sync": "bin/weport-sync.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node bin/weport-sync.mjs setup",
+    "chats": "node bin/weport-sync.mjs chats",
+    "sync": "node bin/weport-sync.mjs once",
+    "watch": "node bin/weport-sync.mjs watch",
+    "status": "node bin/weport-sync.mjs status",
+    "ui": "node bin/weport-sync.mjs ui",
+    "test": "node --test test/"
+  }
+}

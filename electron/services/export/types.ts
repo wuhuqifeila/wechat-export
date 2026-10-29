@@ -68,6 +68,12 @@ export interface ExportOptions {
   mediaPolicy?: 'best-available' | 'original-only'
   /** Explicit diagnostic verification; normal exports do not rescan a live database. */
   verifyAfterExport?: boolean
+  /**
+   * 跳过"媒体目录指纹"（会遍历 msg/FileStorage/cache/avatar 下所有文件）。
+   * 同步客户端每次都导出到全新目录，不复用历史账本，这个指纹对它没有意义，
+   * 而微信附件目录动辄几十万文件，遍历一次要几分钟。
+   */
+  skipSourceMediaFingerprint?: boolean
   format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'arkme-json' | 'html' | 'markdown' | 'txt' | 'excel' | 'weclone' | 'sql'
   contentType?: 'text' | 'voice' | 'image' | 'video' | 'emoji' | 'file'
   dateRange?: { start: number; end: number } | null

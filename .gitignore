@@ -105,3 +105,8 @@ release-commit-msg.txt
 
 # Deferred receiver experiments and generated local state are not release source.
 /infra/telemetry-worker/
+
+# weport-sync 运行状态（含令牌与游标，绝不入库）
+weport-sync/state/
+weport-sync/batches/
+weport-sync/*.tar.gz

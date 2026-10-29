@@ -144,6 +144,14 @@ Intel Mac 暂不支持。其他微信版本与第二账号的兼容性尚未在�
 
 [macOS 与 Linux 安装说明](docs/platform-installation.md) · [更新记录](RELEASE_NOTES.md)
 
+## 增量同步到服务器（本仓库新增）
+
+`weport-sync/` 是一个独立的小程序：按你选定的聊天，每隔几分钟把**新消息和附件**导出并上传到自建接收服务器，适合"客户电脑装一次、后台一直跑"的场景。它复用本仓库的 Weport 引擎（`--cli` 模式 + `export.range` 命令），不改动阅读、搜索、导出等原有功能。
+
+- 部署步骤、配置项、接口约定：[weport-sync/README.md](weport-sync/README.md)
+- 一键注册计划任务：`weport-sync/scripts/install-windows.ps1`
+- 本地控制台：`node weport-sync/bin/weport-sync.mjs ui`
+
 ## 开发与项目资料
 
 基于 Electron、React、TypeScript 和原生 WCDB 引擎。

@@ -313,7 +313,7 @@ export class ExportOrchestrator {
           const effectiveOptions: ExportOptions = this.context.isMediaContentBatchExport(normalizedOptions)
             ? { ...normalizedOptions, exportVoiceAsText: false }
             : normalizedOptions
-          const sourceWatermark = await this.context.getSourceFingerprint(effectiveOptions.exportMedia === true || effectiveOptions.exportAvatars === true)
+          const sourceWatermark = await this.context.getSourceFingerprint(!effectiveOptions.skipSourceMediaFingerprint && (effectiveOptions.exportMedia === true || effectiveOptions.exportAvatars === true))
           const conflictStrategy = normalizeExportConflictStrategy(effectiveOptions.exportConflictStrategy)
 
           // ---- §10.1 ①：导出账本（可续跑）--------------------------------------

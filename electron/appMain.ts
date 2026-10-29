@@ -88,7 +88,9 @@ import { registerSearchRetrieval } from './services/searchRetrieval'
 import { runWithAbortSignal } from './services/ai/abortRun'
 import { connectorsService } from './services/connectors/connectorsService'
 import { registerCliCommands } from './services/cliCommands'
-import { runCommand } from './services/weportCommands'
+import { runCommand, registerCommands } from './services/weportCommands'
+import { todaySyncExport } from './services/syncExportOptions'
+import { collectExportStats, rangeSyncExport, type RangeSyncRequest } from './services/syncExportRange'
 import { collectMacDiagnostics } from './services/macDiagnosticsService'
 import { diagnosticsService, type DiagnosticsContext } from './services/diagnosticsService'
 import {
@@ -8299,6 +8301,84 @@ async function runCliHost() {
   let shuttingDown = false
 
   registerCliCommands()
+
+  // 单聊天、指定时间窗的导出：同步客户端按游标反复调用，不做任何"猜范围"的默认值。
+  const runRangeExport = async (request: RangeSyncRequest) => {
+    await ensureInitialUpdatePolicy()
+    const blocked = compatibilityError(APP_VERSION, true)
+    if (blocked) return { success: false, error: blocked }
+    let plan: ReturnType<typeof rangeSyncExport>
+    try {
+      plan = rangeSyncExport(request)
+    } catch (error) {
+      return { success: false, error: String((error as Error)?.message || error) }
+    }
+    const { sessionId, outputDir, options } = plan
+    if (existsSync(outputDir)) return { success: false, error: '请选择新的批次目录，避免覆盖已有导出' }
+    const connected = await chatService.connect()
+    if (!connected.success) return { success: false, error: connected.error }
+    const sessions = await chatService.getSessions()
+    if (!sessions.success) return { success: false, error: sessions.error }
+    if (!sessions.sessions?.some(s => s.username === sessionId)) return { success: false, error: '所选聊天不存在，请重新选择' }
+    mkdirSync(outputDir, { recursive: true })
+    exportService.setRuntimeConfig({ dbPath: configService?.get('dbPath') || '', decryptKey: configService?.get('decryptKey') || '', myWxid: configService?.get('myWxid') || '', resourcesPath: resolveResourcesPath(), appPath: app.getAppPath(), isPackaged: app.isPackaged })
+    const result = await exportService.exportSessions([sessionId], outputDir, options, (progress) => {
+      // 同步端排查耗时用：把导出进度写进批次目录，正常使用不会读取它。
+      try { appendFileSync(join(outputDir, '..', 'progress.jsonl'), `${JSON.stringify(progress)}\n`) } catch { /* noop */ }
+    })
+    const stats = collectExportStats(outputDir)
+    // 时间窗内没有新消息时导出服务按"跳过"返回，这对同步是正常结果，不是失败。
+    const emptySkipped = (result.emptySkippedSessionIds || []).includes(sessionId) && stats.messageCount === 0
+    const reason = result.failedSessionErrors?.[sessionId] || result.error || (result.failCount ? '导出未完整成功' : '')
+    // 聊天本身有消息、只是这个时间窗里没有：导出服务按失败返回，但对同步是正常结果。
+    const emptyRange = stats.messageCount === 0 && /该会话在指定时间范围内没有消息/.test(String(reason))
+    const ok = (result.success && result.failCount === 0) || emptySkipped || emptyRange
+    return {
+      success: ok,
+      data: { outputDir, dateRange: options.dateRange, result, stats, emptySkipped, emptyRange },
+      error: ok ? undefined : `导出失败：${reason || '未知原因'}`,
+    }
+  }
+
+  registerCommands([
+    {
+      name: 'export.today', summary: 'Export one explicitly selected chat for today as JSON with available images and files.', mutating: true,
+      args: [{ name: 'session', type: 'string', required: true }, { name: 'output', type: 'string', required: true }],
+      run: async (args) => {
+        await ensureInitialUpdatePolicy()
+        const blocked = compatibilityError(APP_VERSION, true)
+        if (blocked) return { success: false, error: blocked }
+        const { sessionId, outputDir, options } = todaySyncExport(args.session, args.output)
+        if (existsSync(outputDir)) return { success: false, error: '请选择新的批次目录，避免覆盖已有导出' }
+        const connected = await chatService.connect()
+        if (!connected.success) return { success: false, error: connected.error }
+        const sessions = await chatService.getSessions()
+        if (!sessions.success) return { success: false, error: sessions.error }
+        if (!sessions.sessions?.some(s => s.username === sessionId)) return { success: false, error: '所选聊天不存在，请重新选择' }
+        mkdirSync(outputDir, { recursive: true })
+        exportService.setRuntimeConfig({ dbPath: configService?.get('dbPath') || '', decryptKey: configService?.get('decryptKey') || '', myWxid: configService?.get('myWxid') || '', resourcesPath: resolveResourcesPath(), appPath: app.getAppPath(), isPackaged: app.isPackaged })
+        const result = await exportService.exportSessions([sessionId], outputDir, options)
+        return { success: result.success && result.failCount === 0, data: { outputDir, dateRange: options.dateRange, result }, error: result.success && result.failCount === 0 ? undefined : '导出未完整成功，请检查批次结果' }
+      },
+    },
+    {
+      name: 'export.range', summary: 'Export one explicitly selected chat for a time window, with media, and return message/media stats.', mutating: true,
+      args: [
+        { name: 'session', type: 'string', required: true },
+        { name: 'output', type: 'string', required: true },
+        { name: 'start', type: 'number', description: 'Unix 秒，包含；缺省为本地当天零点' },
+        { name: 'end', type: 'number', description: 'Unix 秒，包含；缺省为当前时刻' },
+        { name: 'maxFileMb', type: 'number', description: '单附件上限，1-50，默认 5' },
+        { name: 'mediaPolicy', type: 'string', description: 'best-available | original-only' },
+        { name: 'images', type: 'string', description: '0 关闭图片' },
+        { name: 'files', type: 'string', description: '0 关闭文件' },
+        { name: 'voices', type: 'string', description: '1 开启语音' },
+        { name: 'videos', type: 'string', description: '1 开启视频' },
+        { name: 'avatars', type: 'string', description: '1 开启头像' },
+      ],
+      run: (args) => runRangeExport(args as RangeSyncRequest),
+    },
+  ])
 
   const shutdown = (code: number) => {
     if (shuttingDown) return
