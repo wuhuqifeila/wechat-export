@@ -10,6 +10,7 @@ import { createContext, flushPending, runOnce } from './sync.mjs'
 import { acquireLock, createLogger } from './runtime.mjs'
 import { checkHealth } from './upload.mjs'
 import { layout } from './paths.mjs'
+import { flushOnly } from './cli.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -35,6 +36,7 @@ function publicConfig(config) {
     hasToken: Boolean(config.upload.token),
     intervalSeconds: config.schedule.intervalSeconds,
     initialLookbackHours: config.initialLookbackHours,
+    initialWindow: config.initialWindow,
     targets: config.targets,
     export: config.export,
     engine: { mode: config.engine.mode, appDir: config.engine.appDir, exe: config.engine.exe },
@@ -106,8 +108,14 @@ export async function startUi({ home, port = 8799 }) {
         if (!config.engine.appDir && !config.engine.exe) return json(response, 400, { error: '还没有配置 Weport 程序位置，请先在命令行执行 setup' })
         const query = String(url.searchParams.get('q') || '').toLowerCase()
         const result = await serialize(async () => {
-          const active = await getEngine(config)
-          return await loadSessions(active, home, { force: url.searchParams.get('refresh') === '1' })
+          const lock = acquireLock(home)
+          if (!lock.ok) throw new Error('正在同步，请稍后刷新聊天列表')
+          try {
+            const active = await getEngine(config)
+            return await loadSessions(active, home, { force: url.searchParams.get('refresh') === '1' })
+          } finally {
+            try { if (engine) await engine.close() } finally { engine = null; lock.release() }
+          }
         })
         const sessions = result.sessions
           .filter((session) => !query || `${session.name} ${session.id}`.toLowerCase().includes(query))
@@ -139,6 +147,7 @@ export async function startUi({ home, port = 8799 }) {
         if (body.token) config.upload.token = String(body.token)
         if (body.intervalSeconds) config.schedule.intervalSeconds = Number(body.intervalSeconds)
         if (body.initialLookbackHours) config.initialLookbackHours = Number(body.initialLookbackHours)
+        if (body.initialWindow !== undefined) config.initialWindow = body.initialWindow
         if (body.images !== undefined) config.export.images = Boolean(body.images)
         if (body.files !== undefined) config.export.files = Boolean(body.files)
         if (body.maxFileMb) config.export.maxFileMb = Number(body.maxFileMb)
@@ -164,7 +173,7 @@ export async function startUi({ home, port = 8799 }) {
             lastSync = { startedAt: new Date().toISOString(), running: false, error: error.message }
             throw error
           } finally {
-            lock.release()
+            try { if (engine) await engine.close() } finally { engine = null; lock.release() }
           }
         }).catch((error) => log(`手动同步失败：${error.message}`))
         json(response, 202, { started: true })
@@ -172,7 +181,7 @@ export async function startUi({ home, port = 8799 }) {
       }
       if (request.method === 'POST' && url.pathname === '/api/flush') {
         const config = await loadConfig(home)
-        const result = await serialize(async () => flushPending(createContext({ home, config, engine: await getEngine(config), log }), { ignoreBackoff: true }))
+        const result = await serialize(async () => flushOnly(home))
         json(response, 200, result)
         return
       }

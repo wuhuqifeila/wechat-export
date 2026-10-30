@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$TaskName = "WeportSync",
   [switch]$RemoveData
 )
@@ -8,10 +8,12 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 Write-Host "已移除计划任务：$TaskName"
 
 if ($RemoveData) {
-  $home = if ($env:WEPORT_SYNC_HOME) { $env:WEPORT_SYNC_HOME } else { Join-Path $env:LOCALAPPDATA "WeportSync" }
-  if (Test-Path $home) {
-    Write-Host "删除本机同步数据：$home"
-    Remove-Item -Recurse -Force $home
+  $stateDirectory = if ($env:WEPORT_SYNC_HOME) { $env:WEPORT_SYNC_HOME } else { Join-Path $env:LOCALAPPDATA "WeportSync" }
+  $resolvedDirectory = [System.IO.Path]::GetFullPath($stateDirectory)
+  if ((Split-Path -Leaf $resolvedDirectory) -ne 'WeportSync') { throw '自动删除仅限名为 WeportSync 的状态目录，自定义目录请人工核对后处理' }
+  if (Test-Path -LiteralPath $resolvedDirectory) {
+    Write-Host "删除本机同步数据：$resolvedDirectory"
+    Remove-Item -Recurse -Force -LiteralPath $resolvedDirectory
   }
   Write-Host "同步配置、游标和待传批次已删除"
 } else {

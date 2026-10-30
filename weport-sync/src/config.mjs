@@ -29,7 +29,9 @@ export function defaultConfig() {
       keepFailedDays: 14,
       maxLocalBytes: 2 * 1024 * 1024 * 1024,
     },
-    // 第一次同步只回看这么久，避免一上手就把几年历史全导出来。
+    initialWindow: 'today',
+    // 回查覆盖晚到消息和稍后下载的附件；不会超出首次授权的起始时间。
+    reconciliationHours: 72,
     initialLookbackHours: 24,
   }
 }
@@ -77,6 +79,8 @@ export function normalize(config) {
   out.export.maxFileMb = clamp(Math.floor(Number(out.export.maxFileMb) || 5), 1, 50)
   out.upload.maxBatchBytes = clamp(Math.floor(Number(out.upload.maxBatchBytes) || 10 * 1024 * 1024), 256 * 1024, 200 * 1024 * 1024)
   out.initialLookbackHours = clamp(Math.floor(Number(out.initialLookbackHours) || 24), 1, 24 * 365)
+  out.initialWindow = out.initialWindow === 'lookback' ? 'lookback' : 'today'
+  out.reconciliationHours = clamp(Math.floor(Number(out.reconciliationHours) || 72), 1, 24 * 30)
   out.server.baseUrl = String(out.server.baseUrl || '').replace(/\/+$/, '')
   // 早期版本把上传令牌放在 server.token 下，统一到 upload.token，避免两处凭证。
   if (!out.upload.token && out.server.token) out.upload.token = String(out.server.token)

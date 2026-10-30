@@ -1,5 +1,7 @@
 # Weport
 
+本分支增加了指定聊天自动导出、每五分钟上传服务器的功能。客户电脑部署请先看 [部署清单](docs/weport-sync-customer-deployment.md) 和 [weport-sync 使用说明](weport-sync/README.md)。下面的下载地址指向上游，自动同步部署使用本仓库源码构建。
+
 在电脑上阅读、搜索、导出和分析自己的微信聊天记录。
 
 **下载使用：** [前往下载页面](https://github.com/Panther114/Weport/releases)。当前版本为 **v1.3.0**，本次提供 Windows 安装包。下方截图全部使用虚构数据。

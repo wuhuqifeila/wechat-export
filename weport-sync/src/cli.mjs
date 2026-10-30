@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { loadConfig, saveConfig, validateForSync, serverUrl } from './config.mjs'
 import { engineFromConfig } from './engine.mjs'
-import { ensureDirs, listGroups, loadLedger, saveLedger } from './queue.mjs'
+import { ensureDirs, listGroups, loadLedger, saveLedger, saveGroup } from './queue.mjs'
 import { loadSessions, matchSessions } from './sessions.mjs'
 import { createContext, flushPending, runOnce } from './sync.mjs'
 import { createLogger, acquireLock } from './runtime.mjs'
@@ -113,6 +113,7 @@ export async function setup(options, home) {
     if (config.upload.token === '（已设置，直接回车保留）') config.upload.token = (await loadConfig(home)).upload.token
     config.schedule.intervalSeconds = seconds(options.interval, config.schedule.intervalSeconds)
     config.initialLookbackHours = seconds(options.lookback, config.initialLookbackHours)
+    if (options.lookback) config.initialWindow = 'lookback'
     await saveConfig(config, home)
 
     const engine = engineFromConfig(config, files.profile)
@@ -333,7 +334,7 @@ export async function runWatch(home) {
       const waitMs = (config.schedule.intervalSeconds + jitter) * 1000
       log(`下一次同步在 ${Math.round(waitMs / 1000)} 秒后`)
       await new Promise((resolve) => {
-        const timer = setTimeout(resolve, waitMs)
+        const timer = setTimeout(() => { clearInterval(check); resolve() }, waitMs)
         const check = setInterval(() => {
           if (stopping) {
             clearTimeout(timer)
@@ -351,13 +352,25 @@ export async function runWatch(home) {
   }
 }
 
-export async function flushOnly(home) {
+export async function flushOnly(home, { retryRejected = false } = {}) {
   const config = await loadConfig(home)
   const log = createLogger(home)
   await ensureDirs(home)
-  const result = await withEngine(config, home, async (engine) => flushPending(createContext({ home, config, engine, log }), { ignoreBackoff: true }))
-  console.log(JSON.stringify(result, null, 2))
-  return result
+  const lock = acquireLock(home)
+  if (!lock.ok) throw new Error('已有同步进程在运行，请稍后补传')
+  try {
+    if (retryRejected) {
+      for (const group of await listGroups(home)) {
+        for (const part of group.parts || []) {
+          if (part.status === 'rejected') { part.status = 'pending'; part.nextAttemptAt = null }
+        }
+        await saveGroup(home, group)
+      }
+    }
+    const result = await flushPending(createContext({ home, config, engine: null, log }), { ignoreBackoff: true })
+    console.log(JSON.stringify(result, null, 2))
+    return result
+  } finally { lock.release() }
 }
 
 export async function resetCursor(keys, home) {
@@ -373,7 +386,7 @@ export async function resetCursor(keys, home) {
     }
   }
   await saveLedger(home, ledger)
-  console.log(removed.length ? `已重置游标：${removed.join('、')}（下次会按回看时长重导）` : '没有匹配到已选聊天')
+  console.log(removed.length ? `已重置游标：${removed.join('、')}（下次按首次同步范围重导，默认今天零点起）` : '没有匹配到已选聊天')
   return removed
 }
 

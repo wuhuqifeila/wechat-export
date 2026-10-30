@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { layout } from './paths.mjs'
 
@@ -15,16 +16,18 @@ async function readJson(file, fallback) {
     return JSON.parse(await readFile(file, 'utf8'))
   } catch (error) {
     if (error.code === 'ENOENT') return fallback
-    if (error instanceof SyntaxError) return fallback
     throw error
   }
 }
 
 export async function writeJson(file, value) {
   await mkdir(path.dirname(file), { recursive: true })
-  const temp = `${file}.${process.pid}.tmp`
-  await writeFile(temp, JSON.stringify(value, null, 2))
-  await rename(temp, file)
+  const temp = `${file}.${randomUUID()}.tmp`
+  try {
+    const handle = await open(temp, 'wx', 0o600)
+    try { await handle.writeFile(JSON.stringify(value, null, 2)); await handle.sync() } finally { await handle.close() }
+    await rename(temp, file)
+  } finally { await rm(temp, { force: true }) }
 }
 
 // ---------------------------------------------------------------- 游标台账
@@ -41,14 +44,17 @@ export async function saveLedger(home, ledger) {
   await writeJson(files.ledger, ledger)
 }
 
-export async function advanceCursor(home, target, { cursor, lastMessageAt }) {
+export async function advanceCursor(home, target, { cursor, lastMessageAt, initialStart, snapshotHash }) {
   const ledger = await loadLedger(home)
   const previous = ledger.targets[target.id] || {}
   ledger.targets[target.id] = {
+    ...previous,
     name: target.name,
     cursor: Math.floor(cursor),
     lastMessageAt: lastMessageAt ? Math.floor(lastMessageAt) : previous.lastMessageAt || null,
     lastSuccessAt: new Date().toISOString(),
+    ...(initialStart !== undefined ? { initialStart } : {}),
+    ...(snapshotHash !== undefined ? { snapshotHash } : {}),
   }
   await saveLedger(home, ledger)
   return ledger
@@ -91,11 +97,11 @@ export async function saveGroup(home, group) {
 
 export function pendingParts(group, now = Date.now()) {
   if (group.status === 'uploaded') return []
-  return (group.parts || []).filter((part) => part.status !== 'uploaded' && (!part.nextAttemptAt || part.nextAttemptAt <= now))
+  return (group.parts || []).filter((part) => part.status === 'pending' && (!part.nextAttemptAt || part.nextAttemptAt <= now))
 }
 
 export function isGroupFinished(group) {
-  return (group.parts || []).every((part) => part.status === 'uploaded')
+  return Boolean(group.parts?.length) && group.parts.every((part) => part.status === 'uploaded')
 }
 
 export function scheduleRetry(part, delays, now = Date.now()) {
@@ -128,7 +134,7 @@ async function sizeOf(directory) {
 }
 
 /**
- * 本地保留策略：已上传的按天数清，失败的最多留更久；总量超限时从最旧的已上传批次开始删。
+ * 已上传按天数清理，未确认批次永不自动过期；超限时仅清理已上传批次。
  * 只删自己目录下的批次，绝不碰别处的文件。
  */
 export async function cleanup(home, retention, log = () => {}) {
@@ -136,7 +142,6 @@ export async function cleanup(home, retention, log = () => {}) {
   const now = Date.now()
   const day = 24 * 3600 * 1000
   const keepUploaded = (retention.keepUploadedDays || 7) * day
-  const keepFailed = (retention.keepFailedDays || 14) * day
   const removed = []
   for (const group of groups) {
     const created = Date.parse(group.createdAt) || now
@@ -145,12 +150,9 @@ export async function cleanup(home, retention, log = () => {}) {
     if (uploaded && age > keepUploaded) {
       await rm(batchDir(home, group.groupId), { recursive: true, force: true })
       removed.push(group.groupId)
-    } else if (!uploaded && age > keepFailed) {
-      await rm(batchDir(home, group.groupId), { recursive: true, force: true })
-      removed.push(group.groupId)
     }
   }
-  const remaining = (await listGroups(home)).filter((group) => group.status === 'uploaded')
+  const remaining = await listGroups(home)
   let total = 0
   const sizes = new Map()
   for (const group of remaining) {
@@ -161,11 +163,13 @@ export async function cleanup(home, retention, log = () => {}) {
   const cap = retention.maxLocalBytes || 2 * 1024 * 1024 * 1024
   for (const group of remaining) {
     if (total <= cap) break
+    if (group.status !== 'uploaded') continue
     await rm(batchDir(home, group.groupId), { recursive: true, force: true })
     total -= sizes.get(group.groupId) || 0
     removed.push(group.groupId)
   }
   if (removed.length) log(`本地清理：删除 ${removed.length} 个旧批次`)
+  if (total > cap) throw new Error('未上传批次超过本地空间上限，请先补传或增加 retention.maxLocalBytes；不会删除待传数据')
   return removed
 }
 

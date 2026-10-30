@@ -68,7 +68,9 @@
           <input id="interval" type="number" min="1" max="1440" />
         </div>
         <div>
-          <label for="lookback">首次回看（小时）</label>
+          <label for="initialWindow">首次同步范围</label>
+          <select id="initialWindow"><option value="today">今天零点起</option><option value="lookback">指定回看小时数</option></select>
+          <label for="lookback">回看小时数（仅指定回看时使用）</label>
           <input id="lookback" type="number" min="1" max="8760" />
         </div>
       </div>
@@ -186,6 +188,7 @@ async function loadStatus() {
   $('serverUrl').value = state.config.serverUrl || ''
   $('interval').value = Math.round(state.config.intervalSeconds / 60)
   $('lookback').value = state.config.initialLookbackHours
+  $('initialWindow').value = state.config.initialWindow
   $('maxFileMb').value = state.config.export.maxFileMb
   $('images').checked = state.config.export.images
   $('files').checked = state.config.export.files
@@ -231,6 +234,7 @@ $('save').addEventListener('click', async () => {
         token: $('token').value.trim(),
         intervalSeconds: Number($('interval').value) * 60,
         initialLookbackHours: Number($('lookback').value),
+        initialWindow: $('initialWindow').value,
         maxFileMb: Number($('maxFileMb').value),
         images: $('images').checked,
         files: $('files').checked,

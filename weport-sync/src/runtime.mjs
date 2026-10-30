@@ -30,17 +30,21 @@ export function acquireLock(home, name = 'sync') {
   const dir = layout(home).locks
   const file = path.join(dir, `${name}.lock`)
   mkdirSync(dir, { recursive: true })
-  if (existsSync(file)) {
+  try {
+    writeFileSync(file, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { flag: 'wx' })
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
     try {
       const previous = JSON.parse(readFileSync(file, 'utf8'))
-      if (previous?.pid && previous.pid !== process.pid && isAlive(previous.pid)) {
+      if (!previous?.pid || isAlive(previous.pid)) {
         return { ok: false, holder: previous }
       }
+      unlinkSync(file)
     } catch {
-      /* 坏锁直接接管 */
+      return { ok: false, holder: { reason: '锁正在创建或无法读取，请检查运行进程' } }
     }
+    return acquireLock(home, name)
   }
-  writeFileSync(file, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }))
   return {
     ok: true,
     release() {

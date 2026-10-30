@@ -37,10 +37,10 @@ function help() {
   targets      查看同步清单
   once         立即执行一轮增量同步（适合计划任务）
   watch        常驻运行，按间隔循环同步
-  flush        只补传积压批次
+  flush        只补传积压批次；修复拒绝原因后加 --retry-rejected 恢复拒绝批次
   status       查看游标、待上传批次与今日上传量
   ui           打开本地网页控制台（选聊天、看状态、立即同步）
-  reset-cursor <名称…>  重置这些聊天的游标（下次按回看时长重导）
+  reset-cursor <名称…>  重置这些聊天的游标（下次按首次范围重导，默认今天）
 
 通用参数：
   --home <目录>   指定状态目录（默认 %LOCALAPPDATA%\\WeportSync）
@@ -55,7 +55,7 @@ try {
       await setup(options, home)
       break
     case 'doctor':
-      await doctor(home)
+      if ((await doctor(home)).problems.length) process.exitCode = 1
       break
     case 'chats':
       await listChats(options, home)
@@ -72,13 +72,13 @@ try {
       break
     }
     case 'once':
-      await runSyncOnce(home)
+      if (!(await runSyncOnce(home)).ok) process.exitCode = 1
       break
     case 'watch':
       await runWatch(home)
       break
     case 'flush':
-      await flushOnly(home)
+      { const result = await flushOnly(home, { retryRejected: Boolean(options['retry-rejected']) }); if (result.failed || result.remaining) process.exitCode = 1 }
       break
     case 'status':
       await showStatus(home)
